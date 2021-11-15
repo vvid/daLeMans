@@ -34,6 +34,62 @@ var gfxCarCenter <- create_image(24, 16,
            'x' => 0x000000
         }}
         )
+
+var gfxCarLeft <- create_image(24, 16,
+        "........................" +
+        "........................" +
+        "......hhhhhmmmmm........" +
+        ".....hggggggggggl......." +
+        "....hggggggggggggl......" +
+        "....hggggggggggggl......" +
+        "...hhmmmmmmmmmmmlll....." +
+        ".xmhmxxxxxxxxxxxxxxll..." +
+        ".xxmxllllllllllllllxl..." +
+        ".xxxmmmmmmmmmmmmmmmmx..." +
+        "..xmrrrrmmmmmmmmrrrrlx.." +
+        "..xmmmmmmmmmmmmmmmmmlx.." +
+        "..xllllllllllllllllllx.." +
+        "..xxllllllllllllllllxx.." +
+        "..xxx..............xxx.." +
+        "........................",
+
+        {{ '.' => 0xFF00FF;
+           'h' => 0xF09347;
+           'm' => 0xE7812D;
+           'l' => 0x995925;
+           'g' => 0x162D57;
+           'r' => 0xB30F0F;
+           'x' => 0x000000
+        }}
+        )
+var gfxCarRight <- create_image(24, 16,
+        "........................" +
+        "........................" +
+        "........hhhhhmmmmm......" +
+        ".......hggggggggggl....." +
+        "......hggggggggggggl...." +
+        "......hggggggggggggl...." +
+        ".....hhmmmmmmmmmmmlll..." +
+        "...hmxxxxxxxxxxxxxxlllx." +
+        "...mxllllllllllllllxlxx." +
+        "...xmmmmmmmmmmmmmmmmxxx." +
+        "..xmrrrrmmmmmmmmrrrrlx.." +
+        "..xmmmmmmmmmmmmmmmmmlx.." +
+        "..xllllllllllllllllllx.." +
+        "..xxllllllllllllllllxx.." +
+        "..xxx..............xxx.." +
+        "........................",
+
+        {{ '.' => 0xFF00FF;
+           'h' => 0xF09347;
+           'm' => 0xE7812D;
+           'l' => 0x995925;
+           'g' => 0x162D57;
+           'r' => 0xB30F0F;
+           'x' => 0x000000
+        }}
+        )
+
 let gfxCarPivot = 16
 
 var gfxTree0 <- create_image(24, 16,
@@ -51,8 +107,8 @@ var gfxTree0 <- create_image(24, 16,
         "..........xxxx.........." +
         "..........xxxx.........." +
         "..........xxxx.........." +
-        ".........xxxxxxx........" +
-        ".......xxxxxxxxxx.......",
+        "..........xxxxx........." +
+        ".........xxxxxxx........",
 
         {{ '.' => 0x10ff00ff;
            'h' => 0x33A747;
@@ -132,9 +188,15 @@ enum GameMode
     Win
     Lose
 
+enum CarAnim
+    Back
+    Left
+    Right
+
 var game_mode = GameMode RaceGoing
 var race_time = 0.0
 // car state
+var car_dir = 0
 var car_velocity = 0.0
 var car_steering = 0.0
 var car_accel = 0.0
@@ -251,7 +313,13 @@ def draw_car_sprite()
     let wdt = scale0 * float(gfxCarCenter.width) *50.
     let hgt = scale0 * float(gfxCarCenter.height)*50.
     //gfxCarCenter |> draw_image(100., 100.0,0xffffffff, float2(wdt, hgt))
-    gfxCarCenter |> draw_image(rx00 - wdt/2.0, float(sy0i) - hgt,0xffffffff, float2(wdt, hgt))
+
+    if (car_dir < 0)
+        gfxCarLeft |> draw_image(rx00 - wdt/2.0, float(sy0i) - hgt,0xffffffff, float2(wdt, hgt))
+    elif car_dir > 0
+        gfxCarRight |> draw_image(rx00 - wdt/2.0, float(sy0i) - hgt,0xffffffff, float2(wdt, hgt))
+    else
+        gfxCarCenter |> draw_image(rx00 - wdt/2.0, float(sy0i) - hgt,0xffffffff, float2(wdt, hgt))
 
 
 def draw_line(y0, y1 :int; sx0, sx1 : float; scale0, scale1 : float; vn : RoadVisNode&)
@@ -574,6 +642,8 @@ def draw_road()
 
 def prepare_gfx()
     make_image_color_transparent(gfxCarCenter, 0xff00ff)
+    make_image_color_transparent(gfxCarLeft, 0xff00ff)
+    make_image_color_transparent(gfxCarRight, 0xff00ff)
     make_image_color_transparent(gfxTree0, 0xff00ff)
     make_image_color_transparent(gfxPillar, 0xff00ff)
 
@@ -594,7 +664,7 @@ def camera_movement()
     var node_index = get_node_index() 
     camera.nearest_node = node_index
 
-    let heading_num_nodes = 10
+    let heading_num_nodes = 20
     //interpolate camera heading
     var curr_node_pos  = track_data[(node_index + 0) % td_count].pos
     var next_node_pos  = track_data[(node_index + 1) % td_count].pos
@@ -613,7 +683,7 @@ def camera_movement()
 def car_movement()
     car_velocity += car_accel
     car_velocity = min(car_velocity, k_car_max_speed)
-    //car_velocity = max(car_velocity, 0.)
+    car_velocity = max(car_velocity, -0.02)
     car_steering += car_steering_accel * car_velocity * 1.0;
     car_steering *= k_steering_damping
 
@@ -644,6 +714,7 @@ def act(dt: float)
     if game_mode == GameMode RaceGoing 
         camera.offset = 5.0
         race_time += dt;
+        car_dir = 0 
 
         if get_key(VK_W)
             car_accel = k_throttle_accel * dt
@@ -653,13 +724,16 @@ def act(dt: float)
             car_accel = -k_throttle_brake * dt
             car_accel = max(car_accel, -k_car_brake_max)
 
-        if get_key(VK_D)
-            car_steering_accel = +1.1 * dt
-            car_steering_accel = min(car_steering_accel, k_steering_accel_max)
-
         if get_key(VK_A)
             car_steering_accel = -1.1 * dt
             car_steering_accel = max(car_steering_accel, -k_steering_accel_max)
+            car_dir = -1
+
+        if get_key(VK_D)
+            car_steering_accel = +1.1 * dt
+            car_steering_accel = min(car_steering_accel, k_steering_accel_max)
+            car_dir = 1
+
 
     camera_movement()
     car_movement()
@@ -682,11 +756,7 @@ def draw
     enable_alpha_blend()
     draw_road()
     draw_car_sprite()
-    //fill_rect(0, 0, scr_wdt, scr_hgt, 0xFF305F9C)
-    //fill_circle(100.0,0.0, 100.0,0xff)
     //gfxCarCenter |> draw_image(scr_wdtf/2.0,500.0,0xffffffff, float2(float(gfxCarCenter.width) * 8., float(gfxCarCenter.height)*8.))
-//    gfxTree0 |> draw_image(scr_wdtf/2.0-200.0,500.0,0xffffffff, float2(float(gfxTree0.width) * 4., float(gfxTree0.height)*16.))
-//    gfxPillar |> draw_image(scr_wdtf/2.0+200.0,500.0,0xffffffff, float2(float(gfxPillar.width) * 4., float(gfxPillar.height)*8.))
     disable_alpha_blend()
 
     draw_map()
