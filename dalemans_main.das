@@ -174,12 +174,23 @@ struct Level
     nodes : array<RoadNode>
 
 struct Camera
-    heading : float2
-    pos     : float3
+    heading_old : float2
+    heading     : float2
+    pos         : float3
     track_position : float
-    offset : float
+    offset       : float
     offset_accel : float
     nearest_node : int
+
+struct Car
+    dir : int
+    position : float2  //y - forward; x-horiz
+    direction : float2
+    velocity : float2
+    speed : float
+    steering : float
+    accel : float
+    steering_accel : float
 
 enum GameMode
     OnStart
@@ -193,32 +204,31 @@ enum CarAnim
     Left
     Right
 
-var game_mode = GameMode RaceGoing
+var game_mode = GameMode RaceStart
 var race_time = 0.0
-// car state
-var car_dir = 0
-var car_velocity = 0.0
-var car_steering = 0.0
-var car_accel = 0.0
-var car_steering_accel = 0.0
+var lap_race_time = 0.0
+
 var k_car_max_speed = 1.33
 var k_car_accel_max = 0.3
 var k_car_brake_max = 0.5
 var k_steering_accel_max = 0.5
-var k_throttle_accel = 1.0
-var k_throttle_brake = 3.0
+var k_throttle_accel = 0.25
+var k_throttle_brake = 0.5
 var k_steering_accel = 0.001
-var k_steering_damping = 0.1
+var k_steering_damping = 0.8
 
 var track_length   = 0.0
 var track_count    = 0
 var track_data : array<RoadNode>
 var track_spline_data : array<RoadSplineNode>
+var track_pass_half = 0
+var track_pass_start = 0
 
 let map_scale = 4.0 //scale spline coords
 let map_size = 1000
 
 var camera : Camera
+var racecar : Car
 
 let near_plane = 2.0
 let road_segment_length = 1.0
@@ -229,6 +239,7 @@ let scr_wdtf = float(get_screen_width())
 let scr_hgtf = float(get_screen_height())
 
 def reset_game()
+    camera.heading_old = float2(0.,1.)
     camera.heading = float2(0.,1.)
     camera.nearest_node = 0;
     camera.offset = 7.0
@@ -237,8 +248,12 @@ def reset_game()
     camera.pos.y = camera.pos.y + 5.0
 
     //camera.pos = float3(0., 5., 0.)
-
     camera.track_position = 0.0
+    racecar.direction = float2(0.,1.)
+    racecar.position = float2(0., camera.track_position);
+    track_pass_start = 1
+    track_pass_half  = 0
+
 
 def prepare_width()
     return 
@@ -301,22 +316,27 @@ def draw_sprite(y0, y1 :int; sx0, sx1 : float; scale0, scale1 : float; vn : Road
         gfxTree0 |> draw_image(rx03, float(y0) - hgt,0xffffffff, float2(wdt, hgt))
 
 def draw_car_sprite()
-    var scale0 = near_plane / (15.0)
-    let sx0 = scale0
+
+    let dist_to_car = 15.0
+    let scr_halfx = scr_wdtf / 2.0
+
+    var m0 = float2( camera.heading.x, camera.heading.y)
+    var m1 = float2( camera.heading.y,-camera.heading.x)
+
+    var scale0 = near_plane / dist_to_car
+    let sx0 = racecar.position.x
     let sy0 = - camera.offset * scale0
     let sy0i = int((scr_hgtf/-2.0 * sy0) + scr_hgtf/2.0)
-    let scr_halfx = scr_wdtf / 2.0
     let sc0 = scale0 * scr_halfx
 
     let rx00 = float(scr_halfx + sc0 * (sx0))
 
     let wdt = scale0 * float(gfxCarCenter.width) *50.
     let hgt = scale0 * float(gfxCarCenter.height)*50.
-    //gfxCarCenter |> draw_image(100., 100.0,0xffffffff, float2(wdt, hgt))
 
-    if (car_dir < 0)
+    if (racecar.dir < 0)
         gfxCarLeft |> draw_image(rx00 - wdt/2.0, float(sy0i) - hgt,0xffffffff, float2(wdt, hgt))
-    elif car_dir > 0
+    elif racecar.dir > 0
         gfxCarRight |> draw_image(rx00 - wdt/2.0, float(sy0i) - hgt,0xffffffff, float2(wdt, hgt))
     else
         gfxCarCenter |> draw_image(rx00 - wdt/2.0, float(sy0i) - hgt,0xffffffff, float2(wdt, hgt))
@@ -446,11 +466,14 @@ def draw_map
 
 def draw_hud()
     set_font_size(30)
-    let velocity = int(car_velocity * 50. * 3600. / 1000.)
-    text_out(930, 120, "Speed {velocity} km/h", 0xffffff)
+    let speed = int(racecar.speed * 50. * 3600. / 1000.)
+    text_out(930, 120, "Speed {speed} km/h", 0xffffff)
     let minutes = int(race_time / 60.0)
     let seconds = int(race_time % 60.0)
+    let old_minutes = int(lap_race_time / 60.0)
+    let old_seconds = int(lap_race_time % 60.0)
     text_out(930, 150, "Time  {minutes}:{seconds}", 0xffffff)
+    text_out(930, 180, "Lap   {old_minutes}:{old_seconds}", 0xffffff)
 
 //generated track_data
 def gen_spline4(id0, id1, id2, id3 : int; var oldnode : RoadNode&; var index : int&)
@@ -657,8 +680,15 @@ def initialize
     reset_game()
     return
 
-def camera_movement()
-    camera.track_position += car_velocity
+def camera_movement(dt : float)
+    camera.track_position = racecar.position.y
+
+    if camera.track_position >  track_length / 2. && (track_pass_half - track_pass_start) == 1
+        track_pass_half += 1
+    if camera.track_position < track_length / 16. && track_pass_half > track_pass_start
+        track_pass_start += 1
+        lap_race_time = race_time
+        race_time = 0.0
 
     let td_count = track_data |> length()
     var node_index = get_node_index() 
@@ -672,22 +702,67 @@ def camera_movement()
     var next_node_look = track_data[(node_index + heading_num_nodes + 1) % td_count].pos
     var curr_heading_vec = normalize(curr_node_look - curr_node_pos)
     var next_heading_vec = normalize(next_node_look - next_node_pos)
+
     let heading_vec = lerp(curr_heading_vec, next_heading_vec, camera.track_position % road_segment_length)
     let interp_pos = lerp(curr_node_pos, next_node_pos, camera.track_position % road_segment_length)
 
     camera.pos = interp_pos
     camera.pos.y = interp_pos.y + camera.offset
+    camera.heading_old = camera.heading
     camera.heading = normalize(heading_vec.xz)
 
+def length2(vec: float2) : float
+    var distsq = sqr(vec.x) + sqr(vec.y)
+    if (distsq < 0.00001)
+        return 0.0
+	return sqrt(distsq)
 
-def car_movement()
-    car_velocity += car_accel
-    car_velocity = min(car_velocity, k_car_max_speed)
-    car_velocity = max(car_velocity, -0.02)
-    car_steering += car_steering_accel * car_velocity * 1.0;
-    car_steering *= k_steering_damping
+var delta_vector : float2
+var delta_heading : float
+def car_movement(dt : float)
 
+    //forward vector
+    var node_index = get_node_index() 
+    let td_count = track_data |> length()
+    var curr_node_pos  = track_data[(node_index + 0) % td_count].pos
+    var next_node_pos  = track_data[(node_index + 1) % td_count].pos
+    var forward_vec = normalize(next_node_pos - curr_node_pos)
 
+    let mass = 1000.0
+    if (racecar.speed > 1.34 && racecar.accel > 0.0)
+        racecar.accel = 0.0
+
+    if (racecar.velocity.y < 0.0)
+        racecar.velocity = float2(0.,0.)
+//        racecar.accel = 0.0
+
+    if racecar.position.x < -7.
+        racecar.steering = 0.0
+        racecar.steering_accel = 0.1
+        racecar.accel = -4.00
+
+    if racecar.position.x > 7.
+        racecar.steering = 0.0
+        racecar.steering_accel = -0.1
+        racecar.accel = -4.00
+
+    let speed_non_zero = max(racecar.speed, 0.0001)
+
+    racecar.velocity += dt * racecar.accel * racecar.direction
+    racecar.position += racecar.velocity
+    racecar.speed = length2(racecar.velocity.xy)
+    racecar.direction = normalize(racecar.direction)
+
+    var right_vec = float2(forward_vec.z, -forward_vec.x)
+    delta_heading = dot(right_vec.xy, camera.heading)
+
+    racecar.position.x  -= delta_heading * 0.6 * sqr(speed_non_zero);
+
+    racecar.steering += racecar.steering_accel * racecar.speed * 5.0;
+    racecar.position.x += racecar.steering
+    racecar.steering *= k_steering_damping
+
+    return
 
 // this function is called to update game data,
 // dt - time elapsed since the previous update (in seconds)
@@ -700,8 +775,8 @@ def act(dt: float)
 //        if get_key(VK_RETURN)
 //            game_mode = GameMode RaceGoing
 
-    car_accel = 0.0
-    car_steering_accel = 0.0
+    racecar.accel = -0.02
+    racecar.steering_accel = 0.0
 
     if game_mode == GameMode RaceStart
         race_time = 0.0
@@ -714,36 +789,39 @@ def act(dt: float)
     if game_mode == GameMode RaceGoing 
         camera.offset = 5.0
         race_time += dt;
-        car_dir = 0 
+        racecar.dir = 0 
 
+        let speed_non_zero = max(racecar.speed, 0.0001)
         if get_key(VK_W)
-            car_accel = k_throttle_accel * dt
-            car_accel = min(car_accel, k_car_accel_max)
+            racecar.accel = k_throttle_accel
 
         if get_key(VK_S)
-            car_accel = -k_throttle_brake * dt
-            car_accel = max(car_accel, -k_car_brake_max)
+            racecar.accel = -k_throttle_brake
 
         if get_key(VK_A)
-            car_steering_accel = -1.1 * dt
-            car_steering_accel = max(car_steering_accel, -k_steering_accel_max)
-            car_dir = -1
+            racecar.steering_accel -= 0.3 * dt * (2. / speed_non_zero) / 5.
+            racecar.steering_accel = max(racecar.steering_accel, -k_steering_accel_max)
+            racecar.dir = -1
 
         if get_key(VK_D)
-            car_steering_accel = +1.1 * dt
-            car_steering_accel = min(car_steering_accel, k_steering_accel_max)
-            car_dir = 1
+            racecar.steering_accel += 0.3 * dt * (2. / speed_non_zero) / 5.
+            racecar.steering_accel = min(racecar.steering_accel, k_steering_accel_max)
+            racecar.dir = 1
 
-
-    camera_movement()
-    car_movement()
+    camera_movement(dt)
+    car_movement(dt)
 
     return
 
 def draw_debug_info
     set_font_size(16)
-    text_out(100, 0, "camera {camera.pos.x} {camera.pos.y} {camera.pos.z} {camera.track_position}", 0xffffff)
-    text_out(100, 20, "camera node {camera.nearest_node} / {track_count} ", 0xffffff)
+    text_out(40, 0, "camera {camera.pos.x} {camera.pos.y} {camera.pos.z} {camera.track_position}", 0xffffff)
+    text_out(40, 20, "camera node {camera.nearest_node} / {track_count} ", 0xffffff)
+
+    text_out(40, 80, "car spd {racecar.speed} delta {delta_heading} {delta_vector}  ", 0xffffff)
+    text_out(40, 40, "car vel {racecar.velocity} accel {racecar.accel}  ", 0xffffff)
+    text_out(40, 60, "car {racecar.position} {racecar.steering_accel} / {track_count} ", 0xffffff)
+    text_out(40, 100, "car {track_pass_half} {track_pass_start} ", 0xffffff)
     return
 
 // this function will be called every frame after 'act',
